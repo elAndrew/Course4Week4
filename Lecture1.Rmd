@@ -1,0 +1,171 @@
+---
+title: "Exploratory Data Analysis Case Study"
+author: "Andrew Witherspoon"
+date: "10/1/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+dir <- "/Users/andrew/Course4Week4"
+setwd(dir)
+```
+
+First we will load the Samsung motion data (saved as an .rda file, so it's already an R object, that will be called "samsung"):
+```{r}
+load("./data/samsungData.rda")
+dim(samsungData)
+names(samsungData[1:12])
+```
+There are 563 variables.  Above we see the first 12.  They are mostly various accelleration measures.
+
+
+Now lets look at the activity variable.  This is an interesting one.  A factor variable (though not converted to one yet).  Each of the hundreds of accelleration measures is specific to one observation of one activity.
+```{r}
+table(samsungData$activity)
+```
+
+Note that there is another factor variable, "subject" (again, not yet converted to a factor yet).  Each subject has many observations in the data set.
+```{r}
+dim(samsungData[samsungData$subject==1])
+```
+347 observations for subject 1.
+
+Let's do some plotting of the average accerations for just the first subject.  Just the first 2 accelleration measures, with the shape of the points filtered by associated activity 
+
+In the example, it was done with color which was a littel cleaner - 
+col=sub1$activity
+instead of
+pch = c(1:nlevels(sub1$activity))[sub1$activity]
+```{r, message=FALSE}
+library(dplyr)
+samsungData <- data.frame(samsungData) %>%
+  mutate(activity = factor(activity))
+sub1 <- samsungData %>%
+  filter(subject == 1)
+plot(sub1[,1], pch = c(1:nlevels(sub1$activity))[sub1$activity], ylab = names(sub1[1]))
+plot(sub1[,2], pch = c(1:nlevels(sub1$activity))[sub1$activity], ylab = names(sub1[2]))
+legend("bottomright", legend = unique(sub1$activity), pch = unique(sub1$activity))
+```
+Nothing real informative here.  Standing, and sitting seem to be associated with fairly stable accelleration measurements, while walk, walkdown, and walkup are associated with more variance in accelleration measurements.  Laying has some extreme values - hard to decipher.
+
+
+Now we can try clustering based on just the average accelleration (the first three measures - mean x accel, mean y accel, mean x accel):
+```{r}
+library(rafalib) #for myplclust() function
+distanceMatrix <- dist(sub1[,1:3]) #first three measurements meanX meanY meanZ accellerations
+#euclidian distance is the dfault, could also try others maximum, manhattan, etc.
+hclustering <- hclust(distanceMatrix)
+myplclust(hclustering, labels = sub1$activity, lab.col = unclass(sub1$activity))
+#labels is a vector of labels (sub1$activity, in this case)
+#lables is a vector of numbers (unclass(sub1$activity gives each level of the factor variable a number))
+```
+Not too informative - even in color - the colors do clump some...
+
+
+Let's go a little further down the list of variables - plot the max accellerations for the first subject (variables 10:12, maxX maxY maxZ)
+```{r}
+plot(sub1[,10], pch = c(1:nlevels(sub1$activity))[sub1$activity], ylab = names(sub1[10]))
+plot(sub1[,11], pch = c(1:nlevels(sub1$activity))[sub1$activity], ylab = names(sub1[11]))
+legend("bottomright", legend = unique(sub1$activity), pch = unique(sub1$activity))
+```
+This is a little more interesting than the mean values plotted above.
+
+Now lets cluster like we did with the means:
+```{r}
+library(rafalib) #for myplclust() function
+distanceMatrix <- dist(sub1[,10:12]) #first three measurements meanX meanY meanZ accellerations
+#euclidian distance is the dfault, could also try others maximum, manhattan, etc.
+hclustering <- hclust(distanceMatrix)
+myplclust(hclustering, labels = sub1$activity, lab.col = unclass(sub1$activity))
+#labels is a vector of labels (sub1$activity, in this case)
+#lables is a vector of numbers (unclass(sub1$activity gives each level of the factor variable a number))
+```
+Much better separation!!  Three clear clusters
+
+
+Now let's do some Singular Value Decompostion.
+
+First, we'll run svd() on the entire sub1 dataset, except for the last two columns (subject and activity)
+```{r}
+svd1 <- svd(scale(sub1[-c(562,563)]))
+```
+Then we will plot left singular vectors (u), for the first two accelerometer measures again:
+```{r}
+plot(svd1$u[,1], pch = c(1:nlevels(sub1$activity))[sub1$activity])
+plot(svd1$u[,2], pch = c(1:nlevels(sub1$activity))[sub1$activity])
+legend("bottomright", legend = unique(sub1$activity), pch = unique(sub1$activity))
+```
+
+So now, which other variable explains most of the variance in the sub1[,2] variable (the second plot)?  We can find the maximum contributor:
+```{r}
+maxContrib <- which.max(svd1$v[,2]) #gives the index location
+maxContrib
+names(samsungData[maxContrib])
+```
+The 296th variable, fBodyAcc.meanFreq..Z, contributes the most variance to the 2nd variable, tBodyAcc.mean...Y
+
+Now let's cluster 10:12, like we did above, but with the maxiumum contributer added c(10:12,296):
+```{r}
+library(rafalib) #for myplclust() function
+distanceMatrix <- dist(sub1[,10:12, maxContrib]) #first three measurements meanX meanY meanZ accellerations
+#euclidian distance is the dfault, could also try others maximum, manhattan, etc.
+hclustering <- hclust(distanceMatrix)
+myplclust(hclustering, labels = sub1$activity, lab.col = unclass(sub1$activity))
+#labels is a vector of labels (sub1$activity, in this case)
+#lables is a vector of numbers (unclass(sub1$activity gives each level of the factor variable a number))
+legend("topright", legend = unique(sub1$activity), col = unique(sub1$activity), pch = 19)
+abline(h=.6, lty = 3)
+```
+Now the motion activities, are pretty clearly seperated from each other (walk, walkdow, walkup), while the non-motion activities are all still clustered together (standing, sitting, laying).
+
+Now we can try K-means clustering - we will want to run it a few times, due to random starting points (centers), and with different numbers of starts (nstarts = 1).  The number of starts is how many times it will reposition the starting centers... I think.
+```{r}
+kClust <- kmeans(sub1[,-c(562,563)], centers = 6, nstart = 1) 
+#exclude the variable 562 and 563, which are activity and subject
+table(kClust$cluster, sub1$activity)
+```
+We chose 6 centers, because there are six activities.  Ideally, the activities would all cluster individually.  This will change each time it's run, but for the most part, kmeans will find the walking cluster very clearly.  The walkup cluster very clearly.  The walkdown cluster very clearly.  The other three clusters are combinations of laying sitting and standing.
+
+Let's run it again, just to see how it might differ:
+```{r}
+kClust <- kmeans(sub1[,-c(562,563)], centers = 6, nstart = 1) 
+#exclude the variable 562 and 563, which are activity and subject
+table(kClust$cluster, sub1$activity)
+```
+
+
+Now let's change the number of starts to 100:
+```{r}
+kClust <- kmeans(sub1[,-c(562,563)], centers = 6, nstart = 100) 
+#exclude the variable 562 and 563, which are activity and subject
+table(kClust$cluster, sub1$activity)
+```
+It isn't too differnt...  let's run this one again.
+```{r}
+kClust <- kmeans(sub1[,-c(562,563)], centers = 6, nstart = 100) 
+#exclude the variable 562 and 563, which are activity and subject
+table(kClust$cluster, sub1$activity)
+```
+It's clustering a little bit better. Not much, but we'll stick with this one.
+
+Now we can see which variables are most driving the centers for each activity.  This is for cluster 1 - refer back to the table above to see which activity is associated with cluster 1:
+```{r}
+plot(kClust$center[1,], pch = 1, ylab = "Cluster Center", xlab = "")
+top10 <- head(order(-kClust$centers[1,]),10) #the 10 columns with the highest values
+top10
+kClust$center[1,top10]
+```
+The above list is the top 10 variables that affect the centers for this activity.
+
+And we can take the same look at cluster 2:
+```{r}
+plot(kClust$center[2,], pch = 1, ylab = "Cluster Center", xlab = "")
+top10 <- head(order(-kClust$centers[2,]),10) #the 10 columns with the highest values
+top10
+kClust$center[2,top10]
+```
+Again, the above list is the top 10 variables that affect the centers for this activity
+
+And so on for all six clusters...
